@@ -364,6 +364,22 @@ ggplot(trend_data, aes(x = Date, y = Avg_InputPrice, color = factor(Treated))) +
 ```
 
 ```{r}
+# Define a placebo treatment date before actual policy implementation
+placebo_treatment_date <- yq("2016-04")
+
+# Create placebo Post variable
+merged_did <- merged_did %>%
+  mutate(Placebo_Post = if_else(Date >= placebo_treatment_date, 1, 0))
+
+# Run placebo DiD models
+placebo_did_realgross <- lm(RealGross ~ Treated * Placebo_Post, data = merged_did)
+summary(placebo_did_realgross)
+
+placebo_did_inputprice <- lm(InputPrice ~ Treated * Placebo_Post, data = merged_did)
+summary(placebo_did_inputprice)
+```
+
+```{r}
 # Correct Data Preparation Function
 prepare_synth_data <- function(treated_industry, donors, datasets) {
   # Define common processing for each dataset
@@ -443,71 +459,71 @@ gaps.plot(synth.res = synth.out,
 ```
 
 ```{r}
-# # Prepare employment data
-# employment_data <- employment_quarterly %>%
-#   pivot_longer(
-#     cols = -Industry,
-#     names_to = "Date",
-#     values_to = "Employment"
-#   ) %>%
-#   separate(Date, into = c("Year", "Quarter"), sep = "/") %>%
-#   mutate(
-#     Year = as.numeric(Year),
-#     Quarter = as.numeric(str_remove(Quarter, "Q")),
-#     Time_Index = Year + (Quarter - 1) / 4,  # Convert to continuous time index
-#     Tariff_Period = ifelse(Time_Index >= 2018.25, 1, 0)  # Tariff starts in 2018 Q2
-#   )
-# 
-# # Define treated and donor industries
-# treated_industry <- "Motor vehicles, bodies and trailers, and parts"
-# donor_industries <- employment_data %>%
-#   filter(Industry != treated_industry) %>%
-#   pull(Industry) %>%
-#   unique()
-# 
-# # Reshape data for Synth package
-# synth_data <- employment_data %>%
-#   pivot_wider(names_from = Industry, values_from = Employment)
-# 
-# # Ensure all donor industries exist in the dataset
-# donor_industries <- donor_industries[donor_industries %in% colnames(synth_data)]
-# 
-# # Remove industries with excessive missing values
-# donor_industries <- donor_industries[colSums(is.na(synth_data[donor_industries])) == 0]
-# 
-# # Define matrices for Synth
-# X1 <- synth_data %>% filter(Tariff_Period == 0) %>% select(all_of(treated_industry)) %>% as.matrix()
-# X0 <- synth_data %>% filter(Tariff_Period == 0) %>% select(all_of(donor_industries)) %>% as.matrix()
-# Z1 <- synth_data %>% filter(Tariff_Period == 1) %>% select(all_of(treated_industry)) %>% as.matrix()
-# Z0 <- synth_data %>% filter(Tariff_Period == 1) %>% select(all_of(donor_industries)) %>% as.matrix()
-# 
-# # Fit the synthetic control model
-# synth_model <- synth(X1 = X1, X0 = X0, Z1 = Z1, Z0 = Z0)
-# 
-# # Extract and normalize weights for the synthetic control
-# synth_weights <- tibble(
-#   Industry = donor_industries,
-#   Weight = synth_model$solution.w / sum(synth_model$solution.w, na.rm = TRUE)
-# )
-# 
-# # Generate synthetic control values correctly
-# synthetic_control <- synth_data %>%
-#   mutate(Synthetic_Employment = rowSums(as.matrix(select(., all_of(donor_industries))) %*% synth_weights$Weight, na.rm = TRUE))
-# 
-# # Convert Time_Index for plotting
-# synthetic_control <- synthetic_control %>% mutate(Time_Index = synth_data$Time_Index)
-# 
-# # Plot actual vs. synthetic employment trends
-# synth_plot <- synthetic_control %>%
-#   ggplot(aes(x = Time_Index)) +
-#   geom_line(aes(y = `Motor vehicles, bodies and trailers, and parts`, color = "Actual"), size = 1) +
-#   geom_line(aes(y = Synthetic_Employment, color = "Synthetic"), size = 1, linetype = "dashed") +
-#   scale_color_manual(values = c("Actual" = "red", "Synthetic" = "blue")) +
-#   labs(title = "Synthetic Control for Motor Vehicle Industry", x = "Year", y = "Employment", color = "Legend") +
-#   theme_minimal()
-# 
-# # Print the plot
-# print(synth_plot)
+# Prepare employment data
+employment_data <- employment_quarterly %>%
+  pivot_longer(
+    cols = -Industry,
+    names_to = "Date",
+    values_to = "Employment"
+  ) %>%
+  separate(Date, into = c("Year", "Quarter"), sep = "/") %>%
+  mutate(
+    Year = as.numeric(Year),
+    Quarter = as.numeric(str_remove(Quarter, "Q")),
+    Time_Index = Year + (Quarter - 1) / 4,  # Convert to continuous time index
+    Tariff_Period = ifelse(Time_Index >= 2018.25, 1, 0)  # Tariff starts in 2018 Q2
+  )
+
+# Define treated and donor industries
+treated_industry <- "Motor vehicles, bodies and trailers, and parts"
+donor_industries <- employment_data %>%
+  filter(Industry != treated_industry) %>%
+  pull(Industry) %>%
+  unique()
+
+# Reshape data for Synth package
+synth_data <- employment_data %>%
+  pivot_wider(names_from = Industry, values_from = Employment)
+
+# Ensure all donor industries exist in the dataset
+donor_industries <- donor_industries[donor_industries %in% colnames(synth_data)]
+
+# Remove industries with excessive missing values
+donor_industries <- donor_industries[colSums(is.na(synth_data[donor_industries])) == 0]
+
+# Define matrices for Synth
+X1 <- synth_data %>% filter(Tariff_Period == 0) %>% select(all_of(treated_industry)) %>% as.matrix()
+X0 <- synth_data %>% filter(Tariff_Period == 0) %>% select(all_of(donor_industries)) %>% as.matrix()
+Z1 <- synth_data %>% filter(Tariff_Period == 1) %>% select(all_of(treated_industry)) %>% as.matrix()
+Z0 <- synth_data %>% filter(Tariff_Period == 1) %>% select(all_of(donor_industries)) %>% as.matrix()
+
+# Fit the synthetic control model
+synth_model <- synth(X1 = X1, X0 = X0, Z1 = Z1, Z0 = Z0)
+
+# Extract and normalize weights for the synthetic control
+synth_weights <- tibble(
+  Industry = donor_industries,
+  Weight = synth_model$solution.w / sum(synth_model$solution.w, na.rm = TRUE)
+)
+
+# Generate synthetic control values correctly
+synthetic_control <- synth_data %>%
+  mutate(Synthetic_Employment = rowSums(as.matrix(select(., all_of(donor_industries))) %*% synth_weights$Weight, na.rm = TRUE))
+
+# Convert Time_Index for plotting
+synthetic_control <- synthetic_control %>% mutate(Time_Index = synth_data$Time_Index)
+
+# Plot actual vs. synthetic employment trends
+synth_plot <- synthetic_control %>%
+  ggplot(aes(x = Time_Index)) +
+  geom_line(aes(y = `Motor vehicles, bodies and trailers, and parts`, color = "Actual"), size = 1) +
+  geom_line(aes(y = Synthetic_Employment, color = "Synthetic"), size = 1, linetype = "dashed") +
+  scale_color_manual(values = c("Actual" = "red", "Synthetic" = "blue")) +
+  labs(title = "Synthetic Control for Motor Vehicle Industry", x = "Year", y = "Employment", color = "Legend") +
+  theme_minimal()
+
+# Print the plot
+print(synth_plot)
 ```
 
 ```{r}
