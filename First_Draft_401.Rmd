@@ -19,6 +19,7 @@ library(lubridate)
 library(ggplot2)
 library(Synth)
 library(plm)
+library(did)
 ```
 
 ```{r}
@@ -241,111 +242,162 @@ RealGross <- clean_and_scale(RealGross)
 ValAdded <- clean_and_scale(ValAdded)
 Input_P <- clean_and_scale(Input_P)
 
-# Generate plots for all datasets
-employment_plot <- create_industry_plot(employment_quarterly, "Employment (thousands employee)")
-valadded_plot <- create_industry_plot(ValAdded, "Value Added (Billions of 2017 dollars)")
-realgross_plot <- create_industry_plot(RealGross, "Real Gross Output (Billions of 2017 dollars)")
-input_plot <- create_industry_plot(Input_P, "Real Input Price (Billions of 2017 dollars)")
+# Convert to long format WITH COVID DUMMY
+create_long_data <- function(df, value_name) {
+  df %>%
+    pivot_longer(
+      cols = -Industry,
+      names_to = "Date",
+      values_to = value_name
+    ) %>%
+    separate(Date, into = c("Year", "Quarter"), sep = "/") %>%
+    mutate(
+      Year = as.numeric(Year),
+      Quarter = as.numeric(str_remove(Quarter, "Q")),
+      Date = yq(paste(Year, Quarter, sep = "-")),
+      # COVID dummy (2020 Q1-Q2 impact period)
+      Covid = if_else(Date >= yq("2020-01") & Date <= yq("2021-01"), 1, 0)
+    ) %>%
+    select(Industry, Date, all_of(value_name), Covid)
+}
 
-# Display plots
-print(employment_plot)
-print(valadded_plot) 
-print(realgross_plot)
-print(input_plot)
+# Create long datasets with COVID dummy
+real_gross_long <- create_long_data(RealGross, "RealGross")
+input_p_long <- create_long_data(Input_P, "InputPrice") 
+employment_long <- create_long_data(employment_quarterly, "Employment")
+
+# Create DiD datasets WITH COVID CONTROL
+create_did_data <- function(df, control_industry) {
+  df %>%
+    filter(Industry %in% c(control_industry,
+                          "Motor vehicles, bodies and trailers, and parts")) %>%
+    mutate(
+      Treated = if_else(Industry == "Motor vehicles, bodies and trailers, and parts", 1, 0),
+      Post = if_else(Date >= yq("2018-04"), 1, 0)
+    )
+}
+
+# Apply to all datasets
+gross_did <- create_did_data(real_gross_long, "Chemical products")
+input_did <- create_did_data(input_p_long, "Chemical products")
+employment_did <- create_did_data(employment_long, "Machinery")
+
+# Update plots to show COVID period
+create_industry_plot <- function(df, metric_name) {
+  ggplot(df, aes(x = Date, y = .data[[metric_name]], color = Industry)) +
+    geom_vline(xintercept = yq("2018-04"), linetype = "dashed", color = "black") +
+    geom_rect(xmin = yq("2020-01"), xmax = yq("2021-04"), 
+              ymin = -Inf, ymax = Inf, alpha = 0.02, fill = "gray") +
+    geom_line(linewidth = 0.8) +
+    labs(title = paste(metric_name, "with COVID-19 Period Highlighted"),
+         x = "Date", y = metric_name) +
+    theme_bw()
+}
+
+# Generate updated plots
+realgross_plot <- create_industry_plot(real_gross_long, "RealGross")
+input_plot <- create_industry_plot(input_p_long, "InputPrice")
+employment_plot <- create_industry_plot(employment_long, "Employment")
+
+realgross_plot
+input_plot
+employment_plot
 ```
 
 ```{r}
-# Convert RealGross and Input_P to long format and merge
-real_gross_long <- RealGross %>%
-  pivot_longer(
-    cols = -Industry,
-    names_to = "Date",
-    values_to = "RealGross"
-  ) %>%
-  separate(Date, into = c("Year", "Quarter"), sep = "/") %>%
-  mutate(
-    Year = as.numeric(Year),
-    Quarter = as.numeric(str_remove(Quarter, "Q")),
-    Date = yq(paste(Year, Quarter, sep = "-"))
-  ) %>%
-  select(Industry, Date, RealGross)
+# # Convert RealGross and Input_P to long format and merge
+# real_gross_long <- RealGross %>%
+#   pivot_longer(
+#     cols = -Industry,
+#     names_to = "Date",
+#     values_to = "RealGross"
+#   ) %>%
+#   separate(Date, into = c("Year", "Quarter"), sep = "/") %>%
+#   mutate(
+#     Year = as.numeric(Year),
+#     Quarter = as.numeric(str_remove(Quarter, "Q")),
+#     Date = yq(paste(Year, Quarter, sep = "-"))
+#   ) %>%
+#   select(Industry, Date, RealGross)
+# 
+# input_p_long <- Input_P %>%
+#   pivot_longer(
+#     cols = -Industry,
+#     names_to = "Date",
+#     values_to = "InputPrice"
+#   ) %>%
+#   separate(Date, into = c("Year", "Quarter"), sep = "/") %>%
+#   mutate(
+#     Year = as.numeric(Year),
+#     Quarter = as.numeric(str_remove(Quarter, "Q")),
+#     Date = yq(paste(Year, Quarter, sep = "-"))
+#   ) %>%
+#   select(Industry, Date, InputPrice)
+# 
+# employment_long <- employment_quarterly %>%
+#   pivot_longer(
+#     cols = -Industry,
+#     names_to = "Date",
+#     values_to = "Employment"
+#   ) %>%
+#   separate(Date, into = c("Year", "Quarter"), sep = "/") %>%
+#   mutate(
+#     Year = as.numeric(Year),
+#     Quarter = as.numeric(str_remove(Quarter, "Q")),
+#     Date = yq(paste(Year, Quarter, sep = "-"))
+#   ) %>%
+#   select(Industry, Date, Employment)
+# 
+# # Define treatment date 
+# treatment_date <- yq("2018-04")
+# 
+# # First filter to keep only the two industries
+# gross_did <- real_gross_long %>%
+#   filter(Industry %in% c("Chemical products", 
+#                         "Motor vehicles, bodies and trailers, and parts")) %>%
+#   # Create treatment indicators
+#   mutate(
+#     Treated = if_else(Industry == "Motor vehicles, bodies and trailers, and parts", 1, 0),
+#     Post = if_else(Date >= treatment_date, 1, 0)
+#   )
+# 
+# input_did <- input_p_long %>%
+#   filter(Industry %in% c("Chemical products", 
+#                         "Motor vehicles, bodies and trailers, and parts")) %>%
+#   # Create treatment indicators
+#   mutate(
+#     Treated = if_else(Industry == "Motor vehicles, bodies and trailers, and parts", 1, 0),
+#     Post = if_else(Date >= treatment_date, 1, 0)
+#   )
+# 
+# employment_did <- employment_long %>%
+#   filter(Industry %in% c("Machinery", 
+#                         "Motor vehicles, bodies and trailers, and parts")) %>%
+#   # Create treatment indicators
+#   mutate(
+#     Treated = if_else(Industry == "Motor vehicles, bodies and trailers, and parts", 1, 0),
+#     Post = if_else(Date >= treatment_date, 1, 0)
+#   )
+```
 
-input_p_long <- Input_P %>%
-  pivot_longer(
-    cols = -Industry,
-    names_to = "Date",
-    values_to = "InputPrice"
-  ) %>%
-  separate(Date, into = c("Year", "Quarter"), sep = "/") %>%
-  mutate(
-    Year = as.numeric(Year),
-    Quarter = as.numeric(str_remove(Quarter, "Q")),
-    Date = yq(paste(Year, Quarter, sep = "-"))
-  ) %>%
-  select(Industry, Date, InputPrice)
+```{r}
+# DiD models with COVID control
+did_gross <- lm(RealGross ~ Treated*Post + Covid, data = gross_did)
+did_input <- lm(InputPrice ~ Treated*Post + Covid, data = input_did)
+did_employment <- lm(Employment ~ Treated*Post + Covid, data = employment_did)
 
-merged_did <- real_gross_long %>%
-  left_join(input_p_long, by = c("Industry", "Date"))
+# Summary results
+summary(did_gross)
+summary(did_input)
+summary(did_employment)
+```
 
-# Define treatment date 
+```{r}
+# Define treatment date
 treatment_date <- yq("2018-04")
 
-# First filter to keep only the two industries
-merged_did <- merged_did %>%
-  filter(Industry %in% c("Chemical products", 
-                        "Motor vehicles, bodies and trailers, and parts")) %>%
-  # Create treatment indicators
-  mutate(
-    Treated = if_else(Industry == "Motor vehicles, bodies and trailers, and parts", 1, 0),
-    Post = if_else(Date >= treatment_date, 1, 0)
-  )
-```
-
-```{r}
-# For Real Gross Output
-did_realgross <- lm(RealGross ~ Treated * Post, data = merged_did)
-summary(did_realgross)
-
-# For Real Input Price
-did_inputprice <- lm(InputPrice ~ Treated * Post, data = merged_did)
-summary(did_inputprice)
-```
-
-```{r}
-# # Convert to panel data
-# panel_did <- pdata.frame(merged_did, index = c("Industry", "Date"))
-# 
-# # Two-way fixed effects model for Real Gross Output
-# did_fe_realgross <- plm(
-#   RealGross ~ Treated * Post,
-#   data = panel_did,
-#   model = "within",
-#   effect = "twoways"
-# )
-# summary(did_fe_realgross)
-# 
-# # Two-way fixed effects model for Input Price
-# did_fe_inputprice <- plm(
-#   InputPrice ~ Treated * Post,
-#   data = panel_did,
-#   model = "within",
-#   effect = "twoways"
-# )
-# summary(did_fe_inputprice)
-```
-
-```{r}
-# Aggregate data for visualization
-trend_data <- merged_did %>%
-  group_by(Treated, Date) %>%
-  summarise(
-    Avg_RealGross = mean(RealGross, na.rm = TRUE),
-    Avg_InputPrice = mean(InputPrice, na.rm = TRUE),
-    .groups = "drop"
-  )
-
 # Plot Real Gross trends
-ggplot(trend_data, aes(x = Date, y = Avg_RealGross, color = factor(Treated))) +
+ggplot(gross_did, aes(x = Date, y = RealGross, color = factor(Treated))) +
   geom_vline(xintercept = treatment_date, linetype = "dashed") +
   geom_line() +
   labs(title = "Real Gross Output Trends",
@@ -354,108 +406,140 @@ ggplot(trend_data, aes(x = Date, y = Avg_RealGross, color = factor(Treated))) +
   theme_bw()
 
 # Plot Input Price trends
-ggplot(trend_data, aes(x = Date, y = Avg_InputPrice, color = factor(Treated))) +
+ggplot(input_did, aes(x = Date, y = InputPrice, color = factor(Treated))) +
   geom_vline(xintercept = treatment_date, linetype = "dashed") +
   geom_line() +
   labs(title = "Input Price Trends",
        y = "Average Input Price",
        color = "Treatment Group") +
   theme_bw()
+
+# Plot Input Price trends
+ggplot(employment_did, aes(x = Date, y = Employment, color = factor(Treated))) +
+  geom_vline(xintercept = treatment_date, linetype = "dashed") +
+  geom_line() +
+  labs(title = "Employment Trends",
+       y = "Average Employees",
+       color = "Treatment Group") +
+  theme_bw()
 ```
 
 ```{r}
-# Define a placebo treatment date before actual policy implementation
+# Common setup for all datasets
+treatment_date <- yq("2018-04")
 placebo_treatment_date <- yq("2016-04")
 
-# Create placebo Post variable
-merged_did <- merged_did %>%
-  mutate(Placebo_Post = if_else(Date >= placebo_treatment_date, 1, 0))
+# Function to process datasets
+prepare_did_data <- function(df) {
+  df %>%
+    mutate(
+      Year = year(Date),
+      Quarter = quarter(Date),
+      period = (Year - min(Year)) * 4 + Quarter,  # Create period index
+      Treated = if_else(Industry == "Motor vehicles, bodies and trailers, and parts", 1, 0)
+    ) %>%
+    # Define treatment timing
+    mutate(
+      treatment_period = max(period[Date == treatment_date]),  # Ensure treatment period exists
+      g = if_else(Treated == 1, treatment_period, 0),
+      unit.id = as.numeric(factor(Industry))
+    )
+}
 
-# Run placebo DiD models
-placebo_did_realgross <- lm(RealGross ~ Treated * Placebo_Post, data = merged_did)
-summary(placebo_did_realgross)
-
-placebo_did_inputprice <- lm(InputPrice ~ Treated * Placebo_Post, data = merged_did)
-summary(placebo_did_inputprice)
+# Apply to all datasets
+gross_did <- prepare_did_data(gross_did)
+input_did <- prepare_did_data(input_did)
+employment_did <- prepare_did_data(employment_did)
 ```
 
 ```{r}
-# Correct Data Preparation Function
-prepare_synth_data <- function(treated_industry, donors, datasets) {
-  # Define common processing for each dataset
-  process_dataset <- function(df, value_name) {
-    df %>%
-      pivot_longer(
-        cols = -Industry,
-        names_to = "Date",
-        values_to = value_name
-      ) %>%
-      separate(Date, into = c("Year", "Quarter"), sep = "/") %>%
-      mutate(
-        Year = as.numeric(Year),
-        Quarter = as.numeric(str_remove(Quarter, "Q")),
-        Time = (Year - 2005) * 4 + Quarter  # Creates 1,2,3,... for 2005Q1, 2005Q2, etc.
-      )
-  }
-  
-  # Process all datasets
-  processed_data <- list(
-    process_dataset(RealGross, "RealGross"),
-    process_dataset(Input_P, "InputPrice"),
-    process_dataset(ValAdded, "ValueAdded"),
-    process_dataset(employment_quarterly, "Employment")
-  ) %>%
-    reduce(full_join, by = c("Industry", "Year", "Quarter", "Time")) %>%
-    filter(Industry %in% c(treated_industry, donors)) %>%
-    arrange(Industry, Time)
-  
-  return(processed_data)
-}
-
-# Set parameters
-treated_ind <- "Motor vehicles, bodies and trailers, and parts"
-donor_pool <- c("Chemical products", "Machinery", "Electrical equipment, appliances, and components",
-                "Wood products", "Paper products", "Plastics and rubber products",
-                "Food and beverage and tobacco products", "Furniture and related products")
-
-# Create combined dataset
-synth_data <- prepare_synth_data(treated_ind, donor_pool)
-
-
-# Convert to Synth format
-dataprep.out <- dataprep(
-  foo = synth_data,
-  predictors = c("RealGross", "InputPrice", "ValueAdded", "Employment"),
-  dependent = "RealGross",  # Primary outcome variable
-  unit.variable = "Industry",
-  time.variable = "Time",
-  treatment.identifier = treated_ind,
-  controls.identifier = donor_pool,
-  time.predictors.prior = 1:20,  # First 20 periods as pre-treatment
-  time.optimize.ssr = 1:20,
-  unit.names.variable = "Industry",
-  time.plot = 1:n_distinct(synth_data$Time)
+att_gross <- att_gt(
+  yname = "RealGross",
+  tname = "period",
+  idname = "unit.id",
+  gname = "g",
+  data = gross_did,
+  control_group = "notyettreated"
 )
 
-# Run Synthetic Control
-synth.out <- synth(dataprep.out)
+# Event-study plot
+dynamic_gross <- aggte(att_gross, type = "dynamic")
+ggdid(dynamic_gross,
+      title = "Real Gross Output: Event-Study Estimates",
+      xlab = "Quarters Relative to Treatment",
+      ylab = "ATT (Billions of 2017 Dollars)")
+```
 
-# Get results
-synth.tables <- synth.tab(dataprep.res = dataprep.out,
-                         synth.res = synth.out)
+```{r}
+att_input <- att_gt(
+  yname = "InputPrice",
+  tname = "period",
+  idname = "unit.id",
+  gname = "g",
+  data = input_did,
+  control_group = "notyettreated"
+)
 
-# Plot results
-path.plot(synth.res = synth.out,
-         dataprep.res = dataprep.out,
-         Ylab = "Real Gross Output",
-         Xlab = "Quarter",
-         Legend = c("Motor Vehicles", "Synthetic Control"),
-         Legend.position = "topleft")
+# Event-study plot
+dynamic_input <- aggte(att_input, type = "dynamic")
+ggdid(dynamic_input,
+      title = "Input Prices: Event-Study Estimates",
+      xlab = "Quarters Relative to Treatment",
+      ylab = "ATT (Price Index Points)")
+```
 
-gaps.plot(synth.res = synth.out,
-         dataprep.res = dataprep.out,
-         Ylab = "Gap in Real Gross Output",
-         Xlab = "Quarter")
+```{r}
+att_employment <- att_gt(
+  yname = "Employment",
+  tname = "period",
+  idname = "unit.id",
+  gname = "g",
+  data = employment_did,
+  control_group = "notyettreated"
+)
+
+# Event-study plot
+dynamic_employment <- aggte(att_employment, type = "dynamic")
+ggdid(dynamic_employment,
+      title = "Employment: Event-Study Estimates",
+      xlab = "Quarters Relative to Treatment",
+      ylab = "ATT (Thousands of Employees)")
+```
+
+```{r}
+# Function for placebo tests
+run_placebo_test <- function(df, outcome_var) {
+  df %>%
+    mutate(Placebo_Post = if_else(Date >= placebo_treatment_date, 1, 0)) %>%
+    lm(formula = paste(outcome_var, "~ Treated * Placebo_Post + Covid")) %>%
+    summary()
+}
+
+# Run for all datasets
+placebo_gross <- run_placebo_test(gross_did, "RealGross")
+placebo_input <- run_placebo_test(input_did, "InputPrice")
+placebo_employment <- run_placebo_test(employment_did, "Employment")
+
+# View results
+print(placebo_gross)
+print(placebo_input)
+print(placebo_employment)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
 ```
 
 ```{r}
@@ -527,178 +611,164 @@ print(synth_plot)
 ```
 
 ```{r}
-# # Function to prepare data for Synth model
-# prepare_synth_data <- function(data, variable) {
-#   data %>%
-#     pivot_longer(
-#       cols = -Industry,
-#       names_to = "Date",
-#       values_to = variable
-#     ) %>%
-#     separate(Date, into = c("Year", "Quarter"), sep = "/") %>%
-#     mutate(
-#       Year = as.numeric(Year),
-#       Quarter = as.numeric(str_remove(Quarter, "Q")),
-#       Time_Index = Year + (Quarter - 1) / 4,
-#       Tariff_Period = ifelse(Time_Index >= 2018.25, 1, 0)
-#     )
-# }
-# 
-# # Define treated industry
-# treated_industry <- "Motor vehicles, bodies and trailers, and parts"
-# 
-# # Revised function to run synthetic control model
-# run_synth <- function(data, variable) {
-#   # Explicitly exclude treated industry from donor pool
-#   donor_industries <- data %>%
-#     filter(Industry != treated_industry) %>%
-#     pull(Industry) %>%
-#     unique()
-#   
-#   # Convert to wide format and clean column names
-#   synth_data <- data %>% 
-#     pivot_wider(names_from = Industry, values_from = variable) %>%
-#     janitor::clean_names()
-#   
-#   # Standardize treated industry name for matching
-#   treated_col <- janitor::make_clean_names(treated_industry)
-#   
-#   # Filter valid donor industries (exclude treated industry)
-#   donor_industries_clean <- janitor::make_clean_names(donor_industries)
-#   valid_donors <- donor_industries_clean[donor_industries_clean %in% names(synth_data)]
-#   valid_donors <- valid_donors[valid_donors != treated_col]  # Explicit exclusion
-#   
-#   # Check for empty donor pool
-#   if (length(valid_donors) == 0) {
-#     stop("No valid donor industries remaining after exclusions")
-#   }
-#   
-#   # Prepare matrices
-#   X1 <- synth_data %>% 
-#     filter(tariff_period == 0) %>% 
-#     select(all_of(treated_col)) %>% 
-#     as.matrix()
-#   
-#   X0 <- synth_data %>% 
-#     filter(tariff_period == 0) %>% 
-#     select(all_of(valid_donors)) %>% 
-#     as.matrix()
-#   
-#   Z1 <- synth_data %>% 
-#     filter(tariff_period == 1) %>% 
-#     select(all_of(treated_col)) %>% 
-#     as.matrix()
-#   
-#   Z0 <- synth_data %>% 
-#     filter(tariff_period == 1) %>% 
-#     select(all_of(valid_donors)) %>% 
-#     as.matrix()
-#   
-#   # Run synthetic control
-#   synth_model <- synth(X1 = X1, X0 = X0, Z1 = Z1, Z0 = Z0)
-#   
-#   # Create weights table
-#   synth_weights <- tibble(
-#     Industry = donor_industries[match(valid_donors, donor_industries_clean)],
-#     Weight = synth_model$solution.w / sum(synth_model$solution.w, na.rm = TRUE)
+# # Merge all datasets into a panel format
+# panel_data <- employment_quarterly %>%
+#   pivot_longer(-Industry, names_to = "Date", values_to = "Employment") %>%
+#   mutate(Date = yq(str_replace(Date, "/Q", " Q"))) %>%
+#   left_join(
+#     RealGross %>% 
+#       pivot_longer(-Industry, names_to = "Date", values_to = "RealGross") %>%
+#       mutate(Date = yq(str_replace(Date, "/Q", " Q"))),
+#     by = c("Industry", "Date")
+#   ) %>%
+#   left_join(
+#     Input_P %>% 
+#       pivot_longer(-Industry, names_to = "Date", values_to = "InputPrice") %>%
+#       mutate(Date = yq(str_replace(Date, "/Q", " Q"))),
+#     by = c("Industry", "Date")
+#   ) %>%
+#   left_join(
+#     ValAdded %>% 
+#       pivot_longer(-Industry, names_to = "Date", values_to = "ValueAdded") %>%
+#       mutate(Date = yq(str_replace(Date, "/Q", " Q"))),
+#     by = c("Industry", "Date")
 #   )
-#   
-#   # Calculate synthetic control
-#   synthetic_control <- synth_data %>%
-#     mutate(
-#       !!paste0("synthetic_", variable) := 
-#         as.matrix(select(., all_of(valid_donors))) %*% synth_model$solution.w
-#     )
-#   
-#   # Restore original industry names
-#   synthetic_control %>%
-#     rename_with(~str_replace_all(., "_", " "), starts_with("synthetic")) %>%
-#     mutate(time_index = synth_data$time_index)
-# }
 # 
-# synth_employment <- prepare_synth_data(employment_quarterly, "Employment")
-# run_employment <- run_synth(synth_employment, "Employment")
+# # Convert industry names to numeric IDs
+# panel_data <- panel_data %>%
+#   mutate(unit.id = as.numeric(factor(Industry)))
 # 
-# synth_output <- prepare_synth_data(RealGross, "Real Gross Output")
-# run_output <- run_synth(synth_output, "Real Gross Output")
 # 
-# synth_valadded <- prepare_synth_data(ValAdded, "Value Added")
-# run_valadded <- run_synth(synth_valadded, "Value Added")
+# # Define treatment parameters
+# treated_ind <- "Motor vehicles, bodies and trailers, and parts"
+# donor_inds <- unique(panel_data$Industry[panel_data$Industry != treated_ind])
+# pre_treatment_end <- as.Date("2018-01-01") # End of pre-treatment period (2018 Q1)
 # 
-# synth_price <- prepare_synth_data(Input_P, "Input Price")
-# run_price <- run_synth(synth_price, "Input Price")
+# # Now run dataprep with correct numeric identifiers
+# dataprep.out <- dataprep(
+#   foo = panel_data,
+#   predictors = c("RealGross", "InputPrice", "ValueAdded"),
+#   dependent = "Employment",
+#   unit.variable = "unit.id",  # Use numeric ID
+#   time.variable = "Date",
+#   treatment.identifier = treated_ind,
+#   controls.identifier = donor_inds,
+#   time.predictors.prior = seq(min(panel_data$Date), pre_treatment_end, by = "quarter"),
+#   time.optimize.ssr = seq(min(panel_data$Date), pre_treatment_end, by = "quarter"),
+#   time.plot = seq(min(panel_data$Date), max(panel_data$Date), by = "quarter")
+# )
+# 
+# # Generate synthetic control
+# synth.out <- synth(dataprep.out)
+# 
+# # Extract results
+# synth.tables <- synth.tab(dataprep.res = dataprep.out, synth.res = synth.out)
+# weights <- synth.tables$tab.w %>% 
+#   select(Industry = unit.names, Weight = w.weights) %>%
+#   filter(Weight > 0)
+# 
+# # Create comparison plot
+# path.plot(synth.res = synth.out, dataprep.res = dataprep.out,
+#           Xlab = "Quarter", Ylab = "Employment (Thousands)",
+#           Legend = c("Motor Vehicles", "Synthetic Control"),
+#           Legend.position = "topleft")
+# 
+# # Generate gap plot
+# gaps.plot(synth.res = synth.out, dataprep.res = dataprep.out,
+#           Xlab = "Quarter", Ylab = "Employment Gap", 
+#           Main = "Treatment Effect Estimate")
 ```
 
 ```{r}
-# Function to prepare data for Synth with proper time index
-prepare_synth_data <- function(wide_data) {
-  wide_data %>%
-    pivot_longer(
-      cols = -Industry,
-      names_to = "Date",
-      values_to = "Value"
-    ) %>%
-    separate(Date, into = c("Year", "Quarter"), sep = "/") %>%
-    mutate(
-      Year = as.numeric(Year),
-      Quarter = as.numeric(str_replace(Quarter, "Q", "")),
-      time_index = (Year - 2005) * 4 + Quarter,  # 2005 Q1 = 1, ..., 2018 Q1 = 53
-      Treatment = ifelse(Industry == "Motor vehicles, bodies and trailers, and parts", 1, 0)
-    ) %>%
-    filter(!is.na(Value))  # Remove NA values
-}
-
-# Function to run Synthetic Control Method
-run_synth_corrected <- function(wide_data, outcome_var) {
-  synth_data <- prepare_synth_data(wide_data)
-  
-  # Ensure all control units have complete pre-treatment data
-  complete_units <- synth_data %>%
-    filter(time_index <= 53) %>%  # Pre-treatment period
-    group_by(Industry) %>%
-    summarise(n = n()) %>%
-    filter(n == 53) %>%
-    pull(Industry)
-  
-  synth_data <- synth_data %>%
-    filter(Industry %in% complete_units)
-  
-  # Prepare dataprep object
-  data_prep <- dataprep(
-    foo = synth_data,
-    predictors = "Value",
-    predictors.op = "mean",
-    dependent = "Value",
-    unit.variable = "Industry",
-    time.variable = "time_index",
-    treatment.identifier = "Motor vehicles, bodies and trailers, and parts",
-    controls.identifier = setdiff(unique(synth_data$Industry), "Motor vehicles, bodies and trailers, and parts"),
-    time.predictors.prior = 1:53,
-    time.optimize.ssr = 1:53,
-    unit.names.variable = "Industry",
-    time.plot = 1:max(synth_data$time_index)
-  )
-  
-  # Generate synthetic control
-  synth_out <- synth(data_prep)
-  
-  # Plot results
-  path.plot(
-    synth.res = synth_out,
-    dataprep.res = data_prep,
-    Main = paste("Synthetic Control for", outcome_var),
-    Ylab = outcome_var,
-    Xlab = "Quarter (since 2005 Q1)"
-  )
-  
-  return(list(synth_out = synth_out, data_prep = data_prep))
-}
-
-# Apply to each dataset
-employment_result <- run_synth_corrected(employment_quarterly, "Employment")
-valadded_result <- run_synth_corrected(ValAdded, "Value Added")
-realgross_result <- run_synth_corrected(RealGross, "Real Gross Output")
-input_result <- run_synth_corrected(Input_P, "Input Cost")
+# # Define treatment parameters
+# treatment_industry <- "Motor vehicles, bodies and trailers, and parts"
+# treatment_date <- as.yearqtr("2018 Q1")
+# 
+# # Function to create synthetic control
+# create_synthetic <- function(data, outcome_var) {
+#   # Convert to panel format
+#   panel_data <- data %>%
+#     pivot_longer(-Industry, names_to = "Date", values_to = "Value") %>%
+#     mutate(Date = as.yearqtr(Date)) %>%
+#     filter(!is.na(Value)) %>%
+#     as.data.frame()
+#   
+#   # Prepare data for Synth
+#   dataprep_out <- dataprep(
+#     foo = panel_data,
+#     predictors = panel_data %>% 
+#       filter(Date < treatment_date) %>% 
+#       select(Value) %>% colnames(),
+#     dependent = "Value",
+#     unit.variable = "Industry",
+#     time.variable = "Date",
+#     treatment.identifier = treatment_industry,
+#     controls.identifier = unique(panel_data$Industry[panel_data$Industry != treatment_industry]),
+#     time.predictor.prior = seq(from = min(panel_data$Date), 
+#                                to = treatment_date - 0.25, by = 0.25),
+#     time.optimize.ssr = seq(from = min(panel_data$Date), 
+#                             to = treatment_date - 0.25, by = 0.25),
+#     time.plot = unique(panel_data$Date)
+#   )
+#   
+#   # Run synthetic control
+#   synth_out <- synth(dataprep_out)
+#   
+#   # Extract results
+#   synth_results <- dataprep_out$Y0plot %*% synth_out$solution.w %>%
+#     as.data.frame() %>%
+#     tibble::rownames_to_column("Date") %>%
+#     mutate(Date = as.yearqtr(Date),
+#            Industry = "Synthetic Motor",
+#            Value = V1) %>%
+#     select(Industry, Date, Value)
+#   
+#   return(synth_results)
+# }
+# 
+# # Create synthetic controls for each metric
+# synthetic_realgross <- create_synthetic(RealGross, "Real Gross Output")
+# synthetic_employment <- create_synthetic(employment_quarterly, "Employment")
+# synthetic_inputprice <- create_synthetic(Input_P, "Input Price")
+# 
+# # Combine with original data
+# combined_data <- bind_rows(
+#   RealGross %>% 
+#     pivot_longer(-Industry, names_to = "Date", values_to = "Value") %>%
+#     mutate(Date = as.yearqtr(Date),
+#            Metric = "Real Gross Output"),
+#   
+#   employment_quarterly %>% 
+#     pivot_longer(-Industry, names_to = "Date", values_to = "Value") %>%
+#     mutate(Date = as.yearqtr(Date),
+#            Metric = "Employment"),
+#   
+#   Input_P %>% 
+#     pivot_longer(-Industry, names_to = "Date", values_to = "Value") %>%
+#     mutate(Date = as.yearqtr(Date),
+#            Metric = "Input Price"),
+#   
+#   synthetic_realgross %>% mutate(Metric = "Real Gross Output"),
+#   synthetic_employment %>% mutate(Metric = "Employment"),
+#   synthetic_inputprice %>% mutate(Metric = "Input Price")
+# )
+# 
+# # Prepare for DiD analysis
+# did_data <- combined_data %>%
+#   pivot_wider(names_from = Industry, values_from = Value) %>%
+#   mutate(Treatment = if_else(Date >= treatment_date, 1, 0),
+#          Post = if_else(Date >= treatment_date, 1, 0),
+#          Treatment_Group = if_else(Metric == "Motor vehicles, bodies and trailers, and parts", 1, 0)) %>%
+#   filter(Metric %in% c("Synthetic Motor", "Motor vehicles, bodies and trailers, and parts")) %>%
+#   select(Date, Metric, Value, Treatment, Post, Treatment_Group)
+# 
+# # DiD Regression Model
+# did_model <- plm(Value ~ Treatment_Group * Post,
+#                  data = did_data,
+#                  index = c("Metric", "Date"),
+#                  model = "within")
+# 
+# summary(did_model)
 ```
 
 ```{r}
