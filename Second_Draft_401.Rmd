@@ -1,0 +1,859 @@
+---
+title: "Second Draft"
+author: "Chien Tran"
+date: "2025-04-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load Library
+library(tidyverse)
+library(readxl)
+library(lubridate)
+library(ggplot2)
+library(Synth)
+library(plm)
+library(did)
+library(stargazer)
+```
+
+```{r}
+# Load Industry data
+RealGross <- read_excel("GrossOutput.xlsx", sheet = 11, skip = 6, col_names = TRUE) %>%           # Real Gross Output
+  slice(1:(n() - 6)) %>%                          # Remove last 6 rows
+  select(-1, -3) %>%                              # Remove the 1st and 3rd column
+  filter(.[[1]] %in% c("Motor vehicles, bodies and trailers, and parts", "Chemical products", "Plastics and rubber products", "Food and beverage and tobacco products", "Petroleum and coal products"))   # Filter industries
+Input_P <- read_excel("IntermediateInputs.xlsx", sheet = 11, skip = 6, col_names = TRUE) %>%    # Real intermediate Input
+  slice(1:(n() - 6)) %>%                          
+  select(-1, -3) %>%                              
+  filter(.[[1]] %in% c("Motor vehicles, bodies and trailers, and parts", "Chemical products", "Plastics and rubber products", "Food and beverage and tobacco products", "Petroleum and coal products"))
+ValAdded <- read_excel("ValueAdded.xlsx", sheet = 13, skip = 6, col_names = TRUE) %>%             # Value Added
+  slice(1:(n() - 6)) %>%                          
+  select(-1, -3) %>%                              
+  filter(.[[1]] %in% c("Motor vehicles, bodies and trailers, and parts", "Chemical products", "Plastics and rubber products", "Food and beverage and tobacco products", "Petroleum and coal products"))
+
+# Load Employment data
+Motor_E <- read_excel("Motor vehicles and parts.xlsx", skip = 11, col_names = TRUE)                                           # Total vehicles and parts manufacturing employment
+Chemical_E <- read_excel("Chemical manufacturing.xlsx", skip = 11, col_names = TRUE)                                          # Total chemical manufacturing employment
+Foods_E <- read_excel("Food manufacturing.xlsx", skip = 11, col_names = TRUE)                                                 # Total food, bev, and tobacco manufacturing employment
+Plastic_E <- read_excel("Plastics and rubber products manufacturing.xlsx", skip = 11, col_names = TRUE)                       # Total plastic and rubber manufacturing employment
+Wood_E <- read_excel("Wood product manufacturing.xlsx", skip = 11, col_names = TRUE)                                          # Total wood manufacturing employment
+Furniture_E <- read_excel("Furniture and related product manufacturing.xlsx", skip = 11, col_names = TRUE)                    # Total furniture manufacturing employment
+Electric_E <- read_excel("Electrical equipment, appliance, and component manufacturing.xlsx", skip = 11, col_names = TRUE)    # Total electrical equipment, appliance, and component manufacturing employment
+Paper_E <- read_excel("Paper manufacturing.xlsx", skip = 11, col_names = TRUE)                                                # Total paper manufacturing employment
+Nonmetal_E <- read_excel("Nonmetallic mineral product manufacturing.xlsx", skip = 11, col_names = TRUE)                       # Total Nonmetallic mineral product manufacturing employment
+Petro_E <- read_excel("Petroleum and coal products manufacturing.xlsx", skip = 11, col_names = TRUE)                          # Total Petroleum and coal products manufacturing employment
+```
+
+```{r}
+# Rename first column for all datasets
+RealGross <- RealGross %>% rename(Industry = 1)
+Input_P <- Input_P %>% rename(Industry = 1)
+ValAdded <- ValAdded %>% rename(Industry = 1)
+
+# Function to fix column names
+fix_date_columns <- function(df) {
+  df %>%
+    rename_with(
+      ~ ifelse(
+        grepl("\\d{4}Q\\d{1}", .x),  # Match columns like "2005Q1"
+        gsub("(\\d{4})(Q\\d{1})", "\\1/\\2", .x),  # Convert to "2005/Q1"
+        .x
+      )
+    )
+}
+
+# Apply to all datasets
+RealGross <- fix_date_columns(RealGross)
+Input_P <- fix_date_columns(Input_P)
+ValAdded <- fix_date_columns(ValAdded)
+```
+
+```{r}
+# List of industry datasets with their names
+industry_list <- list(
+  "Motor vehicles, bodies and trailers, and parts" = Motor_E,
+  "Chemical products" = Chemical_E,
+  "Food and beverage and tobacco products" = Foods_E,
+  "Plastics and rubber products" = Plastic_E,
+  "Wood products" = Wood_E,
+  "Furniture and related products" = Furniture_E,
+  "Electrical equipment, appliances, and components" = Electric_E,
+  "Paper products" = Paper_E,
+  "Petroleum and coal products" = Petro_E,
+  "Nonmetallic mineral products" = Nonmetal_E
+)
+
+# Process and merge datasets
+merged_data <- map_dfr(
+  .x = names(industry_list),
+  .f = ~ {
+    industry_data <- industry_list[[.x]]  # Current dataset
+    
+    # Reshape data
+    industry_data %>%
+      # Convert month names (Jan, Feb, ...) to numbers
+      pivot_longer(
+        cols = -Year,
+        names_to = "Month",
+        values_to = "Employment"
+      ) %>%
+      mutate(
+        Month = match(Month, month.abb),  # Convert "Jan" to 1, "Feb" to 2, etc.
+        Date = paste(Year, Month, sep = "/")  # Format as "2005/1"
+      ) %>%
+      arrange(Year, Month) %>%      # Ensure chronological order
+      select(-Year, -Month) %>%     # Remove redundant columns
+      pivot_wider(
+        names_from = Date,
+        values_from = Employment
+      ) %>%
+      mutate(Industry = .x) %>%     # Add industry name column
+      select(Industry, everything())
+  }
+)
+
+# Convert wide format to long format
+long_data <- merged_data %>%
+  pivot_longer(
+    cols = -Industry,
+    names_to = "Date",
+    values_to = "Employment"
+  ) %>%
+  separate(Date, into = c("Year", "Month"), sep = "/") %>%
+  mutate(
+    Year = as.numeric(Year),
+    Month = as.numeric(Month),
+    Quarter = ceiling(Month / 3)  # Assign quarter: 1=Jan-Mar, 2=Apr-Jun, etc.
+  )
+
+# Aggregate by industry, year, and quarter
+quarterly_data <- long_data %>%
+  group_by(Industry, Year, Quarter) %>%
+  summarise(
+    Quarterly_Employment = sum(Employment, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Quarter = paste0("Q", Quarter),  # Format as "Q1", "Q2", etc.
+    Date = paste(Year, Quarter, sep = "/")  # Combine into "2005/Q1"
+  )
+
+# Convert back to wide format with quarters as columns
+employment_quarterly <- quarterly_data %>%
+  select(Industry, Date, Quarterly_Employment) %>%
+  pivot_wider(
+    names_from = Date,
+    values_from = Quarterly_Employment
+  )
+
+# View the result
+head(employment_quarterly)
+```
+
+```{r}
+# Function to clean and scale data
+clean_and_scale <- function(df) {
+  df %>%
+    # Convert all value columns to numeric
+    mutate(across(-Industry, ~ parse_number(as.character(.x)) / 1000))
+}
+
+# Apply to all datasets
+RealGross <- clean_and_scale(RealGross)
+ValAdded <- clean_and_scale(ValAdded)
+Input_P <- clean_and_scale(Input_P)
+
+# Convert to long format WITH COVID DUMMY
+create_long_data <- function(df, value_name) {
+  df %>%
+    pivot_longer(
+      cols = -Industry,
+      names_to = "Date",
+      values_to = value_name
+    ) %>%
+    separate(Date, into = c("Year", "Quarter"), sep = "/") %>%
+    mutate(
+      Year = as.numeric(Year),
+      Quarter = as.numeric(str_remove(Quarter, "Q")),
+      Date = yq(paste(Year, Quarter, sep = "-")),
+      # COVID dummy (2020 Q1-Q2 impact period)
+      Covid = if_else(Date >= yq("2020-01") & Date <= yq("2021-01"), 1, 0)
+    ) %>%
+    select(Industry, Date, all_of(value_name), Covid)
+}
+
+# Create long datasets with COVID dummy
+real_gross_long <- create_long_data(RealGross, "RealGross")
+val_added_long <- create_long_data(ValAdded, "ValueAdded")
+input_p_long <- create_long_data(Input_P, "InputPrice") 
+employment_long <- create_long_data(employment_quarterly, "Employment")
+
+custom_colors <- c("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", 
+                   "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
+                   "#bcbd22", "#17becf")
+
+# Update plots to show COVID period
+create_industry_plot <- function(df, metric_name) {
+  ggplot(df, aes(x = Date, y = .data[[metric_name]], color = Industry)) +
+    geom_vline(xintercept = yq("2018-04"), linetype = "dashed", color = "black") +
+    geom_rect(xmin = yq("2020-01"), xmax = yq("2021-04"), 
+              ymin = -Inf, ymax = Inf, alpha = 0.02, fill = "gray") +
+    geom_line(linewidth = 0.8) +
+    scale_color_manual(values = custom_colors) +
+    labs(title = paste(metric_name, "of manufacture industries with tariff and COVID-19 highlighted"),
+         x = "Date", y = metric_name) +
+    theme_bw()
+}
+
+re_real_gross_long <- rename(real_gross_long, "Real Gross (Billion $)" = RealGross)
+re_val_added_long <- rename(val_added_long, "Value Added (Billion $)" = ValueAdded)
+re_input_p_long <- rename(input_p_long, "Input Price (Billion $)" = InputPrice)
+re_employment_long <- rename(employment_long, "Employment (Thousands)" = Employment)
+
+# Generate updated plots
+realgross_plot <- create_industry_plot(re_real_gross_long, "Real Gross (Billion $)")
+valadded_plot <- create_industry_plot(re_val_added_long, "Value Added (Billion $)")
+input_plot <- create_industry_plot(re_input_p_long, "Input Price (Billion $)")
+employment_plot <- create_industry_plot(re_employment_long, "Employment (Thousands)")
+
+realgross_plot
+valadded_plot
+input_plot
+employment_plot
+```
+
+```{r}
+ggsave("realgross_plot.png",
+       plot = realgross_plot,
+       width = 10,
+       height = 6,
+       dpi = 300)
+
+ggsave("valadded_plot.png",
+       plot = valadded_plot,
+       width = 10,
+       height = 6,
+       dpi = 300)
+
+ggsave("input_plot.png",
+       plot = input_plot,
+       width = 10,
+       height = 6,
+       dpi = 300)
+
+ggsave("employment_plot.png",
+       plot = employment_plot,
+       width = 10,
+       height = 6,
+       dpi = 300)
+```
+
+```{r}
+# Create DiD datasets WITH COVID CONTROL
+create_did_data <- function(df, control_industry) {
+  df %>%
+    filter(Industry %in% c(control_industry,
+                          "Motor vehicles, bodies and trailers, and parts")) %>%
+    mutate(
+      Treated = if_else(Industry == "Motor vehicles, bodies and trailers, and parts", 1, 0),
+      Post = if_else(Date >= yq("2018-04"), 1, 0)
+    )
+}
+
+# Apply to all datasets
+gross_did <- create_did_data(real_gross_long, "Chemical products")
+value_did <- create_did_data(val_added_long, "Chemical products")
+input_did <- create_did_data(input_p_long, "Chemical products")
+employment_did <- create_did_data(employment_long, "Chemical products")
+
+# Define treatment date
+treatment_date <- yq("2018-04")
+
+# Real Gross
+realgross_did_plot <- ggplot(gross_did, aes(x = Date, y = RealGross, color = Industry)) +
+  geom_vline(xintercept = treatment_date, linetype = "dashed") +
+  geom_line(linewidth = 1) +
+  geom_rect(xmin = yq("2020-01"), xmax = yq("2021-04"), 
+              ymin = -Inf, ymax = Inf, alpha = 0.02, fill = "gray") +
+  labs(title = "Real Gross Trends", color = "Industry") +
+  theme_bw()
+
+# Value Added
+valadded_did_plot <- ggplot(value_did, aes(x = Date, y = ValueAdded, color = Industry)) +
+  geom_vline(xintercept = treatment_date, linetype = "dashed") +
+  geom_line(linewidth = 1) +
+  geom_rect(xmin = yq("2020-01"), xmax = yq("2021-04"), 
+              ymin = -Inf, ymax = Inf, alpha = 0.02, fill = "gray") +
+  labs(title = "Value Added Trends", color = "Industry") +
+  theme_bw()
+
+# Input Prices
+input_did_plot <- ggplot(input_did, aes(x = Date, y = InputPrice, color = Industry)) +
+  geom_vline(xintercept = treatment_date, linetype = "dashed") +
+  geom_line(linewidth = 1) +
+  geom_rect(xmin = yq("2020-01"), xmax = yq("2021-04"), 
+              ymin = -Inf, ymax = Inf, alpha = 0.02, fill = "gray") +
+  labs(title = "Input Price Trends", color = "Industry") +
+  theme_bw()
+
+# Employment
+employment_did_plot <- ggplot(employment_did, aes(x = Date, y = Employment, color = Industry)) +
+  geom_vline(xintercept = treatment_date, linetype = "dashed") +
+  geom_line(linewidth = 1) +
+  geom_rect(xmin = yq("2020-01"), xmax = yq("2021-04"), 
+              ymin = -Inf, ymax = Inf, alpha = 0.02, fill = "gray") +
+  labs(title = "Employment Trends", color = "Industry") +
+  theme_bw()
+
+realgross_did_plot
+valadded_did_plot
+input_did_plot
+employment_did_plot
+```
+
+```{r}
+ggsave("realgross_did_plot.png",
+       plot = realgross_did_plot,
+       width = 10,
+       height = 6,
+       dpi = 300)
+
+ggsave("valadded_did_plot.png",
+       plot = valadded_did_plot,
+       width = 10,
+       height = 6,
+       dpi = 300)
+
+ggsave("input_did_plot.png",
+       plot = input_did_plot,
+       width = 10,
+       height = 6,
+       dpi = 300)
+
+ggsave("employment_did_plot.png",
+       plot = employment_did_plot,
+       width = 10,
+       height = 6,
+       dpi = 300)
+```
+
+```{r}
+# DiD models with COVID control
+did_gross <- lm(RealGross ~ Treated*Post + Covid, data = gross_did)
+did_value <- lm(ValueAdded ~ Treated*Post + Covid, data = value_did)
+did_input <- lm(InputPrice ~ Treated*Post + Covid, data = input_did)
+did_employment <- lm(Employment ~ Treated*Post + Covid, data = employment_did)
+
+# Summary results
+summary(did_gross)
+summary(did_value)
+summary(did_input)
+summary(did_employment)
+```
+
+```{r}
+# # Create a list of your models
+# models <- list(did_gross, did_value, did_input, did_employment)
+# 
+# # Generate LaTeX code for the table
+# stargazer(models,
+#           title = "DiD Regression Results",
+#           dep.var.labels = c("Real Gross", "Value Added", "Input Price", "Employment"),
+#           covariate.labels = c("Treated", "Post", "Covid", "Treated:Post"),
+#           notes = "Standard errors in parentheses",
+#           header = FALSE,
+#           type = "latex",  # Use "text" for console preview
+#           out = "did_results.tex")  # Save LaTeX code to a file
+```
+
+```{r}
+# Common setup for all datasets
+treatment_date <- yq("2018-04")
+
+# Function to process datasets
+prepare_did_data <- function(df) {
+  df %>%
+    mutate(
+      Year = year(Date),
+      Quarter = quarter(Date),
+      period = (Year - min(Year)) * 4 + Quarter,  # Create period index
+      Treated = if_else(Industry == "Motor vehicles, bodies and trailers, and parts", 1, 0)
+    ) %>%
+    # Define treatment timing
+    mutate(
+      treatment_period = max(period[Date == treatment_date]),  # Ensure treatment period exists
+      g = if_else(Treated == 1, treatment_period, 0),
+      unit.id = as.numeric(factor(Industry))
+    )
+}
+
+# Apply to all datasets
+gross_did <- prepare_did_data(gross_did)
+value_did <- prepare_did_data(value_did)
+input_did <- prepare_did_data(input_did)
+employment_did <- prepare_did_data(employment_did)
+```
+
+```{r}
+att_gross <- att_gt(
+  yname = "RealGross",
+  tname = "period",
+  idname = "unit.id",
+  gname = "g",
+  data = gross_did,
+  control_group = "notyettreated"
+)
+
+# Event-study plot
+dynamic_gross <- aggte(att_gross, type = "dynamic")
+realgross_pt <- ggdid(dynamic_gross,
+      title = "Real Gross Output: Pre-test Estimates with Chemical industry",
+      xlab = "Year",
+      ylab = "ATT (Billions of 2017 Dollars)") +
+  scale_x_continuous(
+    breaks = seq(-52, 24, by = 4), 
+    labels = 2018 + (seq(-52, 24, by = 4) / 4),  # Convert periods to years
+    limits = c(-52, 24)
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Rotate labels for clarity
+  )
+
+att_value <- att_gt(
+  yname = "ValueAdded",
+  tname = "period",
+  idname = "unit.id",
+  gname = "g",
+  data = value_did,
+  control_group = "notyettreated"
+)
+
+# Event-study plot
+dynamic_value <- aggte(att_value, type = "dynamic")
+valadded_pt <- ggdid(dynamic_value,
+      title = "Value Added: Pre-test Estimates with Chemical industry",
+      xlab = "Quarters Relative to Treatment",
+      ylab = "ATT (Billions of 2017 Dollars)")  +
+  scale_x_continuous(
+    breaks = seq(-52, 24, by = 4), 
+    labels = 2018 + (seq(-52, 24, by = 4) / 4),  # Convert periods to years
+    limits = c(-52, 24)
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Rotate labels for clarity
+  )
+
+att_input <- att_gt(
+  yname = "InputPrice",
+  tname = "period",
+  idname = "unit.id",
+  gname = "g",
+  data = input_did,
+  control_group = "notyettreated"
+)
+
+# Event-study plot
+dynamic_input <- aggte(att_input, type = "dynamic")
+input_pt <- ggdid(dynamic_input,
+      title = "Input Prices: Pre-test Estimates with Chemical industry",
+      xlab = "Quarters Relative to Treatment",
+      ylab = "ATT (Price Index Points)")  +
+  scale_x_continuous(
+    breaks = seq(-52, 24, by = 4), 
+    labels = 2018 + (seq(-52, 24, by = 4) / 4),  # Convert periods to years
+    limits = c(-52, 24)
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Rotate labels for clarity
+  )
+
+att_employment <- att_gt(
+  yname = "Employment",
+  tname = "period",
+  idname = "unit.id",
+  gname = "g",
+  data = employment_did,
+  control_group = "notyettreated"
+)
+
+# Event-study plot
+dynamic_employment <- aggte(att_employment, type = "dynamic")
+employment_pt <- ggdid(dynamic_employment,
+      title = "Employment: Pre-test Estimates with Chemical industry",
+      xlab = "Quarters Relative to Treatment",
+      ylab = "ATT (Thousands of Employees)")  +
+  scale_x_continuous(
+    breaks = seq(-52, 24, by = 4), 
+    labels = 2018 + (seq(-52, 24, by = 4) / 4),  # Convert periods to years
+    limits = c(-52, 24)
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Rotate labels for clarity
+  )
+
+realgross_pt
+valadded_pt
+input_pt
+employment_pt
+```
+
+```{r}
+ggsave("realgross_pt.png",
+       plot = realgross_pt,
+       width = 10,
+       height = 6,
+       dpi = 300)
+
+ggsave("valadded_pt.png",
+       plot = valadded_pt,
+       width = 10,
+       height = 6,
+       dpi = 300)
+
+ggsave("input_pt.png",
+       plot = input_pt,
+       width = 10,
+       height = 6,
+       dpi = 300)
+
+ggsave("employment_pt.png",
+       plot = employment_pt,
+       width = 10,
+       height = 6,
+       dpi = 300)
+```
+
+```{r}
+# Create DiD datasets WITH COVID CONTROL
+create_did_data <- function(df, control_industry) {
+  df %>%
+    filter(Industry %in% c(control_industry,
+                          "Motor vehicles, bodies and trailers, and parts")) %>%
+    mutate(
+      Treated = if_else(Industry == "Motor vehicles, bodies and trailers, and parts", 1, 0),
+      Post = if_else(Date >= yq("2018-04"), 1, 0)
+    )
+}
+
+# Apply to all datasets
+alt_gross_did <- create_did_data(real_gross_long, "Food and beverage and tobacco products")
+alt_value_did <- create_did_data(val_added_long, "Food and beverage and tobacco products")
+alt_input_did <- create_did_data(input_p_long, "Food and beverage and tobacco products")
+alt_employment_did <- create_did_data(employment_long, "Food and beverage and tobacco products")
+
+# Define treatment date
+treatment_date <- yq("2018-04")
+
+# Real Gross
+alt_realgross_did_plot <- ggplot(alt_gross_did, aes(x = Date, y = RealGross, color = Industry)) +
+  geom_vline(xintercept = treatment_date, linetype = "dashed") +
+  geom_line(linewidth = 1) +
+  geom_rect(xmin = yq("2020-01"), xmax = yq("2021-04"), 
+              ymin = -Inf, ymax = Inf, alpha = 0.02, fill = "gray") +
+  labs(title = "Real Gross Trends", color = "Industry") +
+  theme_bw()
+
+# Value Added
+alt_valadded_did_plot <- ggplot(alt_value_did, aes(x = Date, y = ValueAdded, color = Industry)) +
+  geom_vline(xintercept = treatment_date, linetype = "dashed") +
+  geom_line(linewidth = 1) +
+  geom_rect(xmin = yq("2020-01"), xmax = yq("2021-04"), 
+              ymin = -Inf, ymax = Inf, alpha = 0.02, fill = "gray") +
+  labs(title = "Value Added Trends", color = "Industry") +
+  theme_bw()
+
+# Input Prices
+alt_input_did_plot <- ggplot(alt_input_did, aes(x = Date, y = InputPrice, color = Industry)) +
+  geom_vline(xintercept = treatment_date, linetype = "dashed") +
+  geom_line(linewidth = 1) +
+  geom_rect(xmin = yq("2020-01"), xmax = yq("2021-04"), 
+              ymin = -Inf, ymax = Inf, alpha = 0.02, fill = "gray") +
+  labs(title = "Input Price Trends", color = "Industry") +
+  theme_bw()
+
+# Employment
+alt_employment_did_plot <- ggplot(alt_employment_did, aes(x = Date, y = Employment, color = Industry)) +
+  geom_vline(xintercept = treatment_date, linetype = "dashed") +
+  geom_line(linewidth = 1) +
+  geom_rect(xmin = yq("2020-01"), xmax = yq("2021-04"), 
+              ymin = -Inf, ymax = Inf, alpha = 0.02, fill = "gray") +
+  labs(title = "Employment Trends", color = "Industry") +
+  theme_bw()
+
+alt_realgross_did_plot
+alt_valadded_did_plot
+alt_input_did_plot
+alt_employment_did_plot
+```
+
+```{r}
+ggsave("alt_realgross_did_plot.png",
+       plot = alt_realgross_did_plot,
+       width = 10,
+       height = 6,
+       dpi = 300)
+
+ggsave("alt_valadded_did_plot.png",
+       plot = alt_valadded_did_plot,
+       width = 10,
+       height = 6,
+       dpi = 300)
+
+ggsave("alt_input_did_plot.png",
+       plot = alt_input_did_plot,
+       width = 10,
+       height = 6,
+       dpi = 300)
+
+ggsave("alt_employment_did_plot.png",
+       plot = alt_employment_did_plot,
+       width = 10,
+       height = 6,
+       dpi = 300)
+```
+
+```{r}
+# DiD models with COVID control
+alt_did_gross <- lm(RealGross ~ Treated*Post + Covid, data = alt_gross_did)
+alt_did_value <- lm(ValueAdded ~ Treated*Post + Covid, data = alt_value_did)
+alt_did_input <- lm(InputPrice ~ Treated*Post + Covid, data = alt_input_did)
+alt_did_employment <- lm(Employment ~ Treated*Post + Covid, data = alt_employment_did)
+
+# Summary results
+summary(alt_did_gross)
+summary(alt_did_value)
+summary(alt_did_input)
+summary(alt_did_employment)
+```
+
+```{r}
+# # Create a list of your models
+# models <- list(alt_did_gross, alt_did_value, alt_did_input, alt_did_employment)
+# 
+# # Generate LaTeX code for the table
+# stargazer(models,
+#           title = "Placebo DiD Regression Results",
+#           dep.var.labels = c("Real Gross", "Value Added", "Input Price", "Employment"),
+#           covariate.labels = c("Treated", "Post", "Covid", "Treated:Post"),
+#           notes = "Standard errors in parentheses",
+#           header = FALSE,
+#           type = "latex",  # Use "text" for console preview
+#           out = "alt_did_results.tex")  # Save LaTeX code to a file
+```
+
+```{r}
+# Apply to all datasets
+alt_gross_did <- prepare_did_data(alt_gross_did)
+alt_value_did <- prepare_did_data(alt_value_did)
+alt_input_did <- prepare_did_data(alt_input_did)
+alt_employment_did <- prepare_did_data(alt_employment_did)
+
+alt_att_gross <- att_gt(
+  yname = "RealGross",
+  tname = "period",
+  idname = "unit.id",
+  gname = "g",
+  data = alt_gross_did,
+  control_group = "notyettreated"
+)
+
+# Event-study plot
+alt_dynamic_gross <- aggte(alt_att_gross, type = "dynamic")
+alt_realgross_pt <- ggdid(dynamic_gross,
+      title = "Real Gross Output: Pre-test Estimates with Foods industry",
+      xlab = "Quarters Relative to Treatment",
+      ylab = "ATT (Billions of 2017 Dollars)")  +
+  scale_x_continuous(
+    breaks = seq(-52, 24, by = 4), 
+    labels = 2018 + (seq(-52, 24, by = 4) / 4),  # Convert periods to years
+    limits = c(-52, 24)
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Rotate labels for clarity
+  )
+
+alt_att_value <- att_gt(
+  yname = "ValueAdded",
+  tname = "period",
+  idname = "unit.id",
+  gname = "g",
+  data = alt_value_did,
+  control_group = "notyettreated"
+)
+
+# Event-study plot
+alt_dynamic_value <- aggte(alt_att_value, type = "dynamic")
+alt_valadded_pt <- ggdid(dynamic_value,
+      title = "Value Added: Pre-test Estimates with Foods industry",
+      xlab = "Quarters Relative to Treatment",
+      ylab = "ATT (Billions of 2017 Dollars)")  +
+  scale_x_continuous(
+    breaks = seq(-52, 24, by = 4), 
+    labels = 2018 + (seq(-52, 24, by = 4) / 4),  # Convert periods to years
+    limits = c(-52, 24)
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Rotate labels for clarity
+  )
+
+alt_att_input <- att_gt(
+  yname = "InputPrice",
+  tname = "period",
+  idname = "unit.id",
+  gname = "g",
+  data = alt_input_did,
+  control_group = "notyettreated"
+)
+
+# Event-study plot
+alt_dynamic_input <- aggte(alt_att_input, type = "dynamic")
+alt_input_pt <- ggdid(dynamic_input,
+      title = "Input Prices: Pre-test Estimates with Foods industry",
+      xlab = "Quarters Relative to Treatment",
+      ylab = "ATT (Price Index Points)")  +
+  scale_x_continuous(
+    breaks = seq(-52, 24, by = 4), 
+    labels = 2018 + (seq(-52, 24, by = 4) / 4),  # Convert periods to years
+    limits = c(-52, 24)
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Rotate labels for clarity
+  )
+
+alt_att_employment <- att_gt(
+  yname = "Employment",
+  tname = "period",
+  idname = "unit.id",
+  gname = "g",
+  data = alt_employment_did,
+  control_group = "notyettreated"
+)
+
+# Event-study plot
+alt_dynamic_employment <- aggte(alt_att_employment, type = "dynamic")
+alt_employment_pt <- ggdid(dynamic_employment,
+      title = "Employment: Pre-test Estimates with Foods industry",
+      xlab = "Quarters Relative to Treatment",
+      ylab = "ATT (Thousands of Employees)")  +
+  scale_x_continuous(
+    breaks = seq(-52, 24, by = 4), 
+    labels = 2018 + (seq(-52, 24, by = 4) / 4),  # Convert periods to years
+    limits = c(-52, 24)
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Rotate labels for clarity
+  )
+
+alt_realgross_pt
+alt_valadded_pt
+alt_input_pt
+alt_employment_pt
+```
+
+```{r}
+ggsave("alt_realgross_pt.png",
+       plot = alt_realgross_pt,
+       width = 10,
+       height = 6,
+       dpi = 300)
+
+ggsave("alt_valadded_pt.png",
+       plot = alt_valadded_pt,
+       width = 10,
+       height = 6,
+       dpi = 300)
+
+ggsave("alt_input_pt.png",
+       plot = alt_input_pt,
+       width = 10,
+       height = 6,
+       dpi = 300)
+
+ggsave("alt_employment_pt.png",
+       plot = alt_employment_pt,
+       width = 10,
+       height = 6,
+       dpi = 300)
+```
+
+```{r}
+# # Prepare employment data
+# employment_data <- employment_quarterly %>%
+#   pivot_longer(
+#     cols = -Industry,
+#     names_to = "Date",
+#     values_to = "Employment"
+#   ) %>%
+#   separate(Date, into = c("Year", "Quarter"), sep = "/") %>%
+#   mutate(
+#     Year = as.numeric(Year),
+#     Quarter = as.numeric(str_remove(Quarter, "Q")),
+#     Time_Index = Year + (Quarter - 1) / 4,  # Convert to continuous time index
+#     Tariff_Period = ifelse(Time_Index >= 2018.25, 1, 0)  # Tariff starts in 2018 Q2
+#   )
+# 
+# # Define treated and donor industries
+# treated_industry <- "Motor vehicles, bodies and trailers, and parts"
+# donor_industries <- employment_data %>%
+#   filter(Industry != treated_industry) %>%
+#   pull(Industry) %>%
+#   unique()
+# 
+# # Reshape data for Synth package
+# synth_data <- employment_data %>%
+#   pivot_wider(names_from = Industry, values_from = Employment)
+# 
+# # Ensure all donor industries exist in the dataset
+# donor_industries <- donor_industries[donor_industries %in% colnames(synth_data)]
+# 
+# # Remove industries with excessive missing values
+# donor_industries <- donor_industries[colSums(is.na(synth_data[donor_industries])) == 0]
+# 
+# # Define matrices for Synth
+# X1 <- synth_data %>% filter(Tariff_Period == 0) %>% select(all_of(treated_industry)) %>% as.matrix()
+# X0 <- synth_data %>% filter(Tariff_Period == 0) %>% select(all_of(donor_industries)) %>% as.matrix()
+# Z1 <- synth_data %>% filter(Tariff_Period == 1) %>% select(all_of(treated_industry)) %>% as.matrix()
+# Z0 <- synth_data %>% filter(Tariff_Period == 1) %>% select(all_of(donor_industries)) %>% as.matrix()
+# 
+# # Fit the synthetic control model
+# synth_model <- synth(X1 = X1, X0 = X0, Z1 = Z1, Z0 = Z0)
+# 
+# # Extract and normalize weights for the synthetic control
+# synth_weights <- tibble(
+#   Industry = donor_industries,
+#   Weight = synth_model$solution.w / sum(synth_model$solution.w, na.rm = TRUE)
+# )
+# 
+# # Generate synthetic control values correctly
+# synthetic_control <- synth_data %>%
+#   mutate(Synthetic_Employment = rowSums(as.matrix(select(., all_of(donor_industries))) %*% synth_weights$Weight, na.rm = TRUE))
+# 
+# # Convert Time_Index for plotting
+# synthetic_control <- synthetic_control %>% mutate(Time_Index = synth_data$Time_Index)
+# 
+# # Plot actual vs. synthetic employment trends
+# synth_plot <- synthetic_control %>%
+#   ggplot(aes(x = Time_Index)) +
+#   geom_line(aes(y = `Motor vehicles, bodies and trailers, and parts`, color = "Actual"), size = 1) +
+#   geom_line(aes(y = Synthetic_Employment, color = "Synthetic"), size = 1, linetype = "dashed") +
+#   scale_color_manual(values = c("Actual" = "red", "Synthetic" = "blue")) +
+#   labs(title = "Synthetic Control for Motor Vehicle Industry", x = "Year", y = "Employment", color = "Legend") +
+#   theme_minimal()
+# 
+# # Print the plot
+# print(synth_plot)
+```
+
+
+```{r}
+
+```
+
+```{r}
+
+```
