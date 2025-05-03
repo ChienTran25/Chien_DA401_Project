@@ -1,4 +1,4 @@
-README: Impact of 2018 Steel/Aluminum Tariffs on the U.S. Automotive Industry
+Impact of 2018 Steel/Aluminum Tariffs on the U.S. Automotive Industry
 Overview
 This repository contains code and analysis for a quasi-experimental study evaluating the downstream effects of the 2018 U.S. steel and aluminum tariffs on the automotive industry. Using a Difference-in-Differences (DiD) framework, the research compares quarterly trends (2005–2024) in real gross output, input prices, value added, and employment between the automotive sector (treatment group) and the chemical manufacturing sector (control group). Despite initial significant results, critical diagnostic tests revealed violations of the parallel trends assumption, rendering causal claims unreliable. This project highlights the methodological challenges of isolating policy impacts in complex economic systems.
 
@@ -136,6 +136,6 @@ Affiliation: Denison University
 
 Contact: trand.chien1993@gmail.com
 
-GitHub: [Your Profile Link]
+GitHub: (https://github.com/ChienTran25)
 
 Note: This study underscores the importance of rigorous robustness checks in quasi-experimental policy analysis. While the 2018 tariffs were anticipated to impact automotive manufacturers, methodological constraints prevent definitive causal conclusions. Code and visualizations are provided for transparency and further exploration.
