@@ -1,95 +1,141 @@
-Automotive Industry Analysis Post-2018 Tariffs
+README: Impact of 2018 Steel/Aluminum Tariffs on the U.S. Automotive Industry
 Overview
-This project investigates the impact of Trump's 2018 steel and aluminum tariffs on the automotive industry. The primary objective is to assess how the tariffs affected key performance indicators—such as production, input costs, and employment—within the automotive sector relative to a control group of industries that are less dependent on steel and aluminum.
+This repository contains code and analysis for a quasi-experimental study evaluating the downstream effects of the 2018 U.S. steel and aluminum tariffs on the automotive industry. Using a Difference-in-Differences (DiD) framework, the research compares quarterly trends (2005–2024) in real gross output, input prices, value added, and employment between the automotive sector (treatment group) and the chemical manufacturing sector (control group). Despite initial significant results, critical diagnostic tests revealed violations of the parallel trends assumption, rendering causal claims unreliable. This project highlights the methodological challenges of isolating policy impacts in complex economic systems.
 
-Data Sources and Variables
-The analysis utilizes several datasets, which have been processed and aggregated for clarity and consistency. Below are the main variables and the corresponding data sources:
+Key Features
+Data Integration: Harmonizes quarterly economic data from the BEA and monthly employment data from the BLS.
 
-Datasets
-RealGross
-Source: Bureau of Economic Analysis (BEA)
-Description: Real gross output data (in billions of 2017 dollars) for various manufacturing industries.
+Dynamic Visualization: Time-series plots with tariff implementation markers (2018 Q2) and COVID-19 impact periods (2020 Q1–2021 Q1).
 
-ValAdded
-Source: Bureau of Economic Analysis (BEA)
-Description: Real value added data (in billions of 2017 dollars) across the industries.
+Difference-in-Differences Analysis:
 
-Input_P
-Source: BEA (Intermediate Inputs)
-Description: Real input price data (in billions of 2017 dollars) representing the cost of intermediate inputs.
+Baseline DiD Models: Tests for relative changes post-tariff.
 
-Employment Data
-Source: Various employment Excel files (e.g., Motor vehicles and parts, Chemical manufacturing, Machinery manufacturing, etc.)
-Description: Quarterly employment figures for each industry. Data has been aggregated to provide a comprehensive quarterly time series for analysis.
+Robustness Checks:
 
-Industry Groups
-The analysis focuses on the following nine industries:
+Parallel Trends Pre-Tests: Event-study plots to validate assumptions.
 
-Motor vehicles, bodies and trailers, and parts (Treatment group)
-Chemical products (Control group)
-Machinery
-Food and beverage and tobacco products
-Plastics and rubber products
-Wood products
-Furniture and related products
-Electrical equipment, appliances, and components
-Paper products
-Key Variables for Analysis
-Industry:
-Identifies the manufacturing sector.
+Placebo Tests: Artificial intervention in 2014 to detect spurious effects.
 
-RealGross:
-Real gross output measured in billions of 2017 dollars.
+Transparent Workflow: Fully reproducible R code with detailed comments.
 
-ValAdded:
-Real value added, also in billions of 2017 dollars.
+Data Sources
+1. Economic Indicators
+Bureau of Economic Analysis (BEA)
 
-InputPrice:
-Real input prices indicating the cost of intermediate inputs.
+Variables: Real gross output, real intermediate input prices, real value added.
 
-Employment:
-Quarterly employment figures aggregated by industry.
+Industries:
 
-Treatment Indicators (for DiD analysis):
+Motor vehicles, bodies and trailers, and parts (treatment group)
 
-Treated: Equals 1 for the automotive industry (Motor vehicles, bodies and trailers, and parts) and 0 for the control industry (Chemical products).
-Post: Equals 1 for dates after the tariffs were implemented (April 2018 onward) and 0 otherwise.
+Chemical products (primary control group)
+
+Food and beverage/tobacco products (secondary control group)
+
+Frequency: Quarterly (2005–2024)
+
+2. Employment Data
+Bureau of Labor Statistics (BLS)
+
+Variables: Employment (converted from monthly to quarterly).
+
+Frequency: Quarterly (2005–2024)
+
+3. External Shocks
+COVID-19 Dummy: 2020 Q1–2021 Q1.
+
+Tariff Implementation Date: 2018 Q2.
+
 Methodology
-Data Cleaning and Transformation:
-The raw datasets are imported, filtered by industry, and cleaned (e.g., standardizing date formats and scaling numeric values). Employment data is aggregated into quarterly observations.
+1. Difference-in-Differences (DiD)
+Model:
 
-Visualization:
-Line plots are generated to visualize trends over time for the key metrics—employment, real gross output, value added, and input prices—across industries.
+plaintext
+Y = β₀ + β₁*Treated + β₂*Post + β₃*(Treated × Post) + β₄*Covid + ε  
+Treated: 1 for automotive industry, 0 for chemical industry.
 
-Difference-in-Differences (DiD) Analysis:
-A preliminary DiD model compares the automotive industry with a control group (Chemical products) before and after the tariff implementation to examine the differential impact on real gross output and input prices.
+Post: 1 for periods after April 2018.
 
-How to Run the Project
-Prerequisites:
-Ensure that the following R libraries are installed:
+2. Diagnostic Tests
+Parallel Trends Pre-Test: Event-study design with dynamic treatment effects.
 
-tidyverse
-readxl
-lubridate
-ggplot2
-Synth
-plm
-Data Files:
-Place the Excel files in your working directory:
+Placebo Test: Shift treatment date to 2014 to detect pre-existing trends.
 
-GrossOutput.xlsx
-IntermediateInputs.xlsx
-ValueAdded.xlsx
-Employment data files (e.g., Motor vehicles and parts.xlsx, Chemical manufacturing.xlsx, etc.)
-Execution:
-Run the provided R script to load, clean, visualize the data, and conduct the DiD analysis.
+3. Visual Validation
+Key Trends: Real gross output, input prices, value added, and employment.
 
-Next Steps
-Methodological Refinement:
-Further refine the synthetic control method to establish a more robust control variable.
+Event-Study Plots: Pre-/post-tariff coefficient dynamics.
 
-Robustness Testing:
-Incorporate additional tests (e.g., placebo and sensitivity analyses) to validate the findings.
+Key Findings
+1. Initial DiD Results
+Outcome	Treated × Post Coefficient	Significance
+Real Gross Output	+98.86 (***)	p < 0.001
+Real Input Prices	+104.51 (***)	p < 0.001
+Employment	+129.41	Not Significant
+2. Diagnostic Results
+Parallel Trends Violation: Significant pre-tariff divergences in trends (Graph 3).
 
-Extended Analysis:
-Consider integrating additional macroeconomic or firm-level data to account for external factors such as the COVID-19 pandemic.
+Placebo Test Significance: Artificial 2014 "tariff" showed similar effects, confirming pre-existing trends.
+
+3. Conclusion
+Observed differences likely reflect pre-existing industry trends rather than causal tariff effects.
+
+Chemical industry proved inadequate as a control group due to structural differences.
+
+Reproducing the Analysis
+1. Requirements
+R Packages:
+
+R
+install.packages(c("tidyverse", "readxl", "lubridate", "ggplot2", "Synth", "plm", "did", "patchwork"))
+Data: Proprietary BEA/BLS Excel files (not included here).
+
+2. Code Structure
+Data Preparation:
+
+GrossOutput.xlsx, IntermediateInputs.xlsx, ValueAdded.xlsx: Economic indicators.
+
+Motor vehicles and parts.xlsx, etc.: Employment data.
+
+Analysis:
+
+Data Cleaning: Harmonize monthly employment to quarterly.
+
+DiD Regressions: lm() models with interaction terms.
+
+Event-Study Plots: did::att_gt() and ggdid().
+
+3. Outputs
+Figures:
+
+combined_plots.png: Industry trends with tariff/COVID markers.
+
+realgross_pt.png, valadded_pt.png: Event-study plots for parallel trends.
+
+Tables: Regression results (e.g., Table 2, Table 3).
+
+Limitations
+Control Group Adequacy: Chemical industry trends diverged pre-tariff.
+
+Confounding Factors: COVID-19, supply chain disruptions, and retaliatory tariffs not fully isolated.
+
+Data Granularity: Quarterly data may mask short-term dynamics.
+
+Future Directions
+Synthetic Control Method (SCM): Construct data-driven counterfactual.
+
+Advanced DiD Estimators: Callaway & Sant'Anna or Gardner two-way fixed effects.
+
+Firm-Level Analysis: Disaggregate industry-wide effects.
+
+Author
+Chien Tran
+
+Affiliation: Denison University
+
+Contact: trand.chien1993@gmail.com
+
+GitHub: [Your Profile Link]
+
+Note: This study underscores the importance of rigorous robustness checks in quasi-experimental policy analysis. While the 2018 tariffs were anticipated to impact automotive manufacturers, methodological constraints prevent definitive causal conclusions. Code and visualizations are provided for transparency and further exploration.
